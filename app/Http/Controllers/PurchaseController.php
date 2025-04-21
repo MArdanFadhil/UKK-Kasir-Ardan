@@ -5,11 +5,10 @@ namespace App\Http\Controllers;
 use App\Models\Member;
 use App\Models\Product;
 use App\Models\Purchase;
-use App\Exports\ExportData;
 use Illuminate\Http\Request;
+use Barryvdh\DomPDF\Facade\Pdf;
 use App\Exports\PurchasesExport;
 use Illuminate\Support\Facades\DB;
-use App\Http\Controllers\Controller;
 use Maatwebsite\Excel\Facades\Excel;
 
 class PurchaseController extends Controller
@@ -19,12 +18,22 @@ class PurchaseController extends Controller
         $this->middleware('auth');
     }
 
-    /**
-     * Display a listing of the resource.
-     */
-    public function index()
+    public function index(Request $request)
     {
-        $purchases = Purchase::with('member')->latest()->paginate(10);
+        $search = $request->input('search');
+
+        $purchases = Purchase::with(['member', 'user'])
+            ->when($search, function ($query) use ($search) {
+                $query->where(function ($q) use ($search) {
+                    $q->whereHas('member', function ($q2) use ($search) {
+                        $q2->where('name', 'ILIKE', "%$search%");
+                    })
+                    ->orWhereRaw("TO_CHAR(pay_date, 'DD Mon YYYY') ILIKE ?", ["%$search%"]);
+                });
+            })
+            ->latest()
+            ->paginate(10);
+    
         return view('purchase.index', compact('purchases'));
     }
 
@@ -32,83 +41,74 @@ class PurchaseController extends Controller
     {
         $products = Product::all();
         return view('purchase.create', compact('products'));
-        
     }
 
     public function store(Request $request)
     {
-        $quantities = session('quantities'); // Data produk yang dibeli
-        $memberType = $request->member_type; // Tipe member (member/non-member)
-        $memberPhone = $request->member_type === 'member' ? $request->phone_number : '0000000000'; // Nomor telepon member
-        $userId = auth()->id(); // ID pengguna yang melakukan transaksi
+        $quantities = session('quantities');
+        $memberType = $request->member_type;
+        $userId = auth()->id();
 
         if ($memberType === 'member' && $request->phone_number) {
-            // Use the inputted name or provide a default if empty
-            $memberName = $request->member_name ?? 'Member'; // Use 'member_name' from input
-        
             $member = Member::firstOrCreate(
-                ['phone_number' => $request->phone_number], // Use 'phone_number' from input
-                ['name' => $memberName] // Save the entered name
+                ['phone_number' => $request->phone_number],
+                ['name' => $request->member_name ?? 'Member', 'points' => 100]
             );
-        
-            if ($member->wasRecentlyCreated) {
-                $member->points = 100; 
-            } else {
-                $member->name = $memberName;
-            }
-        
-            $member->save(); // Save or update the member data
-            $memberId = $member->id; // Fetch the member's ID
-            session(['member_id' => $memberId]); // Save the ID in the session
-        
-        } else {
-            // If it's not a member, create default non-member data
-            $member = Member::firstOrCreate(
-                ['phone_number' => '0000000000'], // Default phone number
-                ['name' => 'Non Member'] // Default name
-            );
-        
-            $memberId = $member->id;
+            
+            $isNew = $member->wasRecentlyCreated;
+            
+            session([
+                'member_id' => $member->id,
+                'payment_amount' => $request->payment_amount,
+                'member_type' => 'member',
+                'is_new_member' => $isNew,
+            ]);
+            
+            return redirect()->route('purchase.memberPayment');
         }
+        
+        $member = Member::firstOrCreate(
+            ['phone_number' => '0000000000'],
+            ['name' => 'Non Member', 'points' => 0]
+        );
 
-        // Membuat entri pembelian
-        $purchase = Purchase::create([
-            'pay_date' => now(),
-            'purchase_date' => now(),
-            'member_id' => $memberId,
-            'payment_amount' => floatval(str_replace(['Rp', '.', ','], '', $request->payment_amount)), // Jumlah pembayaran
-            'total_price' => 0, // Tidak menghitung total harga
-            'total_pay' => 0, // Tidak menghitung total pembayaran
-            'total_return' => 0, // Tidak menghitung kembalian
-            'user_id' => $userId,
-            'used_point' => 0, // Tidak menghitung poin yang digunakan
-        ]);
-
-        // Menyimpan produk yang dibeli
+        $totalPrice = 0;
         if (!empty($quantities)) {
             foreach ($quantities as $productId => $qty) {
                 if ($qty > 0) {
                     $product = Product::findOrFail($productId);
-
-                    // Menambahkan produk ke pembelian
-                    $purchase->products()->attach($productId, [
-                        'quantity' => $qty,
-                        'price' => $product->price,
-                        'subtotal' => 0, // Tidak menghitung subtotal
-                    ]);
-
-                    // Mengurangi stok produk
-                    $product->decrement('stock', $qty);
+                    $totalPrice += $product->price * $qty;
                 }
             }
         }
 
-        // Jika member, arahkan ke halaman pembayaran
-        if ($memberType === 'member') {
-            return redirect()->route('purchase.memberPayment', ['id' => $purchase->id]);
+        $paymentAmount = floatval(str_replace(['Rp', '.', ','], '', $request->payment_amount));
+        $totalReturn = max($paymentAmount - $totalPrice, 0);
+
+        $purchase = Purchase::create([
+            'pay_date' => now(),
+            'purchase_date' => now(),
+            'member_id' => $member->id,
+            'payment_amount' => $paymentAmount,
+            'total_price' => $totalPrice,
+            'total_pay' => $paymentAmount,
+            'total_return' => $totalReturn,
+            'user_id' => $userId,
+            'used_point' => 0,
+        ]);
+
+        foreach ($quantities as $productId => $qty) {
+            if ($qty > 0) {
+                $product = Product::findOrFail($productId);
+                $purchase->products()->attach($productId, [
+                    'quantity' => $qty,
+                    'price' => $product->price,
+                    'subtotal' => $product->price * $qty,
+                ]);
+                $product->decrement('stock', $qty);
+            }
         }
 
-        // Reset session jika bukan member
         session()->forget(['quantities', 'payment_amount', 'total_amount', 'member_id', 'member_type', 'phone_number']);
 
         return redirect()->route('purchase.detail', $purchase->id);
@@ -130,34 +130,26 @@ class PurchaseController extends Controller
 
     public function selectProduct(Request $request)
     {
-        $quantities = collect($request->input('quantities'))->filter(function ($qty) {
-            return $qty > 0;
-        });
+        $quantities = collect($request->input('quantities'))->filter(fn($qty) => $qty > 0);
 
-        // Cek apakah ada produk yang dipilih
         if ($quantities->isEmpty()) {
             return redirect()->back()->with('error', 'Silakan pilih produk terlebih dahulu.');
         }
 
         $products = Product::whereIn('id', $quantities->keys())->get();
-
         $total = 0;
+
         foreach ($products as $product) {
             $qty = $quantities[$product->id] ?? 0;
             $total += $product->price * $qty;
         }
 
-        // Simpan ke session
         session([
             'quantities' => $quantities,
             'payment_amount' => $total,
         ]);
 
-        return view('purchase.confirm', [
-            'products' => $products,
-            'quantities' => $quantities,
-            'total' => $total,
-        ]);
+        return view('purchase.confirm', compact('products', 'quantities', 'total'));
     }
 
     public function memberPayment()
@@ -168,16 +160,23 @@ class PurchaseController extends Controller
             return redirect()->route('purchase.index')->with('error', 'Data pembelian tidak ditemukan.');
         }
 
-        $member = Member::find(session('member_id'));
+        $memberId = session('member_id');
+        $member = Member::find($memberId);
+
+        if (!$member) {
+            return redirect()->route('purchase.index')->with('error', 'Member tidak ditemukan.');
+        }
 
         $productIds = collect($quantities)->keys()->toArray();
         $products = Product::whereIn('id', $productIds)->get();
-
         $totalAmount = 0;
+
         foreach ($quantities as $productId => $qty) {
             if ($qty > 0) {
                 $product = $products->firstWhere('id', $productId);
-                $totalAmount += $product->price * $qty;
+                if ($product) {
+                    $totalAmount += $product->price * $qty;
+                }
             }
         }
 
@@ -186,7 +185,7 @@ class PurchaseController extends Controller
             'quantities' => $quantities,
             'products' => $products,
             'total' => $totalAmount,
-            'discount' => 0, // default no discount
+            'discount' => 0,
             'totalAmountAfterDiscount' => $totalAmount,
             'payment_amount' => session('payment_amount'),
         ]);
@@ -194,15 +193,11 @@ class PurchaseController extends Controller
 
     public function storeMember(Request $request)
     {
-        // Ambil data dari session
         $quantities = session('quantities');
         $memberId = session('member_id');
         $userId = auth()->id();
-
-        // Ambil jumlah uang yang dibayar (payment_amount)
         $paymentAmount = floatval(str_replace(['Rp', '.', ','], '', $request->payment_amount));
 
-        // Periksa apakah ada item yang dibeli
         $totalPrice = 0;
         if (!empty($quantities)) {
             foreach ($quantities as $productId => $qty) {
@@ -212,77 +207,67 @@ class PurchaseController extends Controller
                 }
             }
         }
-        $usedPoint = intval($request->used_point ?? 0); 
 
-        // Konversi poin menjadi rupiah (asumsi 1 poin = 10 Rupiah)
-        $pointsValue = 10; // Setiap poin bernilai 10 IDR
+        $usedPoint = intval($request->used_point ?? 0);
+        $pointsValue = 10;
         $pointValue = $usedPoint * $pointsValue;
+        $totalAfterPoint = max($totalPrice - $pointValue, 0);
+        $totalReturn = max($paymentAmount - $totalAfterPoint, 0);
 
-        // Hitung total harga setelah dikurangi poin
-        $totalAfterPoint = max($totalPrice - $pointValue, 0); // Pastikan tidak kurang dari 0
-
-        // Hitung kembalian jika jumlah pembayaran lebih besar dari total harga
-        $totalReturn = max($paymentAmount - $totalAfterPoint, 0); // Pastikan minimal 0
-
-        // Membuat transaksi pembelian
         $purchase = Purchase::create([
             'pay_date' => now(),
             'purchase_date' => now(),
             'member_id' => $memberId,
-            'payment_amount' => $paymentAmount, // Pay tetap sesuai dengan yang dibayar
-            'total_price' => $totalPrice, // Harga total barang
-            'total_pay' => $paymentAmount, // Pay tetap
-            'total_return' => $totalReturn, // Kembalian
+            'payment_amount' => $paymentAmount,
+            'total_price' => $totalPrice,
+            'total_pay' => $paymentAmount,
+            'total_return' => $totalReturn,
             'user_id' => $userId,
-            'used_point' => $usedPoint, // Simpan poin yang digunakan
+            'used_point' => $usedPoint,
         ]);
 
-        // Menambahkan item pembelian ke dalam transaksi
-        if (!empty($quantities)) {
-            foreach ($quantities as $productId => $qty) {
-                if ($qty > 0) {
-                    $product = Product::findOrFail($productId);
+        $isNewMember = session('is_new_member', false); // default false
+        $usedPoint = intval($request->used_point ?? 0);
 
-                    $purchase->products()->attach($productId, [
-                        'quantity' => $qty,
-                        'price' => $product->price,
-                        'subtotal' => $product->price * $qty,
-                    ]);
+        if ($isNewMember && $usedPoint > 0) {
+            return redirect()->back()->withErrors([
+                'used_point' => 'Member baru tidak bisa langsung menggunakan poin.'
+            ])->withInput();
+        }
 
-                    // Kurangi stok produk
-                    $product->decrement('stock', $qty);
-                }
+        foreach ($quantities as $productId => $qty) {
+            if ($qty > 0) {
+                $product = Product::findOrFail($productId);
+                $purchase->products()->attach($productId, [
+                    'quantity' => $qty,
+                    'price' => $product->price,
+                    'subtotal' => $product->price * $qty,
+                ]);
+                $product->decrement('stock', $qty);
             }
         }
 
-        // Update poin anggota (member)
-        $member = Member::find(session('member_id'));
-
-        // Calculate totalAfterPoint and totalReturn properly
-        $totalAfterPoint = max($totalPrice - $pointValue, 0);
-        $totalReturn = max($paymentAmount - $totalAfterPoint, 0);
-
-        // Member earns points from spending
-        $earnedPoints = floor($totalAfterPoint * 0.01); // 1% of totalAfterPoint
+        $member = Member::find($memberId);
+        $earnedPoints = floor($totalAfterPoint * 0.01);
 
         if ($member) {
-            // Deduct used points
+            $member->name = $request->input('member_name');
+            $member->phone_number = $request->input('phone_number');
+
             if ($usedPoint > 0 && $member->points >= $usedPoint) {
                 $member->points -= $usedPoint;
             }
 
-            // Add earned points
             $member->points += $earnedPoints;
             $member->save();
         }
-        // Hapus data session setelah transaksi
+
         session()->forget(['quantities', 'payment_amount', 'total_amount', 'member_id', 'name', 'phone_number']);
 
         return redirect()->route('purchase.detail', $purchase->id)->with([
             'total' => $totalAfterPoint,
             'return' => $totalReturn,
         ]);
-        
     }
 
     public function detail($id)
@@ -299,16 +284,14 @@ class PurchaseController extends Controller
     public function orderDetail(Request $request)
     {
         $purchaseId = $request->input('purchase_id');
-        $purchase->save();
-
         $purchase = Purchase::find($purchaseId);
-        
+
         if (!$purchase) {
             return redirect()->back()->with('error', 'Pembelian tidak ditemukan.');
         }
 
         return redirect()->route('purchase.detail', $purchase->id)
-                        ->with('success', 'Detail pembelian diperbarui.');
+                         ->with('success', 'Detail pembelian diperbarui.');
     }
 
     public function export()
@@ -316,4 +299,11 @@ class PurchaseController extends Controller
         return Excel::download(new PurchasesExport, 'data-pembelian.xlsx');
     }
 
+    public function downloadReceipt($id)
+    {
+        $purchase = Purchase::with(['products', 'member', 'user'])->findOrFail($id);
+
+        return Pdf::loadView('purchase.receipt', compact('purchase'))
+                ->download("struk-pembelian-{$purchase->id}.pdf");
+    }
 }

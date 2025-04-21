@@ -34,32 +34,26 @@ class DashboardController extends Controller
             $totalPurchasesToday = Purchase::whereDate('created_at', $today)->count();
             $lastUpdated = Purchase::whereDate('created_at', $today)->latest()->value('created_at');
         }
-    
-        // Bar Chart: Jumlah penjualan per hari (7 hari terakhir)
         $dailySales = Purchase::select(
             DB::raw('DATE(created_at) as date'),
             DB::raw('COUNT(*) as total')
         )
-            ->whereDate('created_at', '>=', Carbon::now()->subDays(6))
             ->groupBy(DB::raw('DATE(created_at)'))
             ->orderBy('date', 'ASC')
             ->get();
-    
+        
+        $dates = $dailySales->pluck('date');
         $barLabels = [];
         $barData = [];
-    
-        $dates = collect();
-        for ($i = 6; $i >= 0; $i--) {
-            $dates->push(Carbon::now()->subDays($i)->format('Y-m-d'));
-        }
-    
+        
         foreach ($dates as $date) {
             $formatted = Carbon::parse($date)->format('d M');
             $barLabels[] = $formatted;
-    
+        
             $matched = $dailySales->firstWhere('date', $date);
             $barData[] = $matched ? $matched->total : 0;
         }
+        
     
         // Pie Chart: Jumlah produk berdasarkan nama produk
         $products = Product::select('name_product')

@@ -13,19 +13,25 @@
   </div>
   <div class="card shadow border-0">
     <div class="card-body">
+      <div class="d-flex justify-content-between mb-3">
+        <div>
+          <a href="{{ route('purchase.export') }}" class="btn btn-success">
+            <i class="bi bi-download"></i> Download Excel
+          </a>
+          @if(Auth::check() && Auth::user()->role === 'staff')
+            <a href="{{ route('purchase.create') }}" class="btn btn-primary">
+              <i class="bi bi-plus-circle"></i> Add Purchase
+            </a>
+          @endif
+        </div>
+        <form method="GET" action="{{ route('purchase.index') }}" class="d-flex">
+          <input type="text" name="search" placeholder="Search....." value="{{ request('search') }}" class="form-control me-2">
+          <button type="submit" class="btn btn-outline-secondary">Cari</button>
+        </form>
+      </div>
       <div class="table-responsive">
         <table class="table table-bordered">
           <thead class="table-light">
-            <div class="d-flex justify-content-end mb-3">
-              <a href="{{ route('purchase.export') }}" class="btn btn-success">
-                <i class="bi bi-download"></i> Download Excel
-              </a>
-              @if(Auth::check() && Auth::user()->role === 'staff')
-                <a href="{{ route('purchase.create') }}" class="btn btn-primary">
-                  <i class="bi bi-plus-circle"></i> Add Purchase
-                </a>
-              @endif
-            </div>
             <tr>
               <th scope="col">#</th>
               <th scope="col">Customer Name</th>
@@ -40,16 +46,16 @@
               <tr>
                 <th scope="row">{{ $loop->iteration }}</th>
                 <td>{{ $purchase->member->name ?? 'Non Member' }}</td>
-                <td>{{ \Carbon\Carbon::parse($purchase->purchase_date)->format('d M Y, H:i A') }}</td>
+                <td>{{ \Carbon\Carbon::parse($purchase->purchase_date)->timezone('Asia/Jakarta')->format('d M Y, H:i A') }}</td>
                 <td>Rp {{ number_format($purchase->total_price, 0, ',', '.') }}</td>
                 <td>{{ $purchase->user->name ?? '-' }}</td>
                 <td>
                   <button type="button" class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#purchaseModal{{ $purchase->id }}">
                     <i class="bi bi-eye"></i> Show
-                  </button>                  
-                  {{-- <a href="{{ route('purchase.download', $purchase->id) }}" class="btn btn-primary"">
-                    <i class="bi bi-download"></i> Download Receipt
-                  </a> --}}
+                  </button>
+                  <a href="{{ route('purchase.receipt', $purchase->id) }}" class="btn btn-sm btn-primary">
+                    <i class="bi bi-file-earmark-arrow-down-fill"></i> Download Receipt PDF
+                  </a>
                 </td>
               </tr>
             @empty
@@ -69,6 +75,10 @@
                       <p><strong>Customer:</strong> {{ $purchase->member->name ?? 'Non Member' }}</p>
                       <p><strong>Date:</strong> {{ \Carbon\Carbon::parse($purchase->purchase_date)->format('d M Y, H:i A') }}</p>    
                       <p><strong>Total Price:</strong> Rp {{ number_format($purchase->total_price, 0, ',', '.') }}</p>
+                      @if($purchase->used_point > 0)
+                        <p><strong>Used Point:</strong> {{ $purchase->used_point }} (Rp {{ number_format($purchase->used_point * 10, 0, ',', '.') }})</p>
+                        <p><strong>Total After Point:</strong> Rp {{ number_format($purchase->total_price - ($purchase->used_point * 10), 0, ',', '.') }}</p>
+                      @endif
                       <p><strong>Total Pay:</strong> Rp {{ number_format($purchase->total_pay, 0, ',', '.') }}</p>
                       <p><strong>Return:</strong> Rp {{ number_format($purchase->total_return, 0, ',', '.') }}</p>
                       <p><strong>Made By:</strong> {{ $purchase->user->name ?? '-' }}</p>

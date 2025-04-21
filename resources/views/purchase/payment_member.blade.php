@@ -4,19 +4,8 @@
 <div class="container">
     <div class="card shadow-sm border rounded-4 p-4">
         <h4 class="mb-4">Member Payment</h4>
-
-        <div class="mb-3">
-            <label for="member_name" class="form-label">Member Name</label>
-            <input type="text" name="member_name" id="member_name" class="form-control" 
-                   value="{{ old('member_name', $member->name ?? '') }}" required>
-        </div>
         
-        <div class="mb-3">
-            <label for="phone_number" class="form-label">Phone Number</label>
-            <input type="text" name="phone_number" id="phone_number" class="form-control" value="{{ old('phone_number', $member->phone_number ?? '') }}">
-        </div>
-        
-        <p><strong>Available Points:</strong> <span id="available-points">{{ $member->points ?? 0 }}</span> poin</p>       
+        <p><strong>Available Points:</strong> <span id="available-points">{{ $member->points ?? 0 }}</span> poin</p>
         <hr>
 
         @foreach ($products as $product)
@@ -41,22 +30,36 @@
             <div>Total After Using Points</div>
             <div id="total-after-point">Rp {{ number_format($total, 0, ',', '.') }}</div>
         </div>
-        
+
         <form action="{{ route('purchase.storeMember') }}" method="POST" class="mt-4">
             @csrf
+
+            <div class="mb-3">
+                <label for="member_name" class="form-label">Member Name</label>
+                <input type="text" name="member_name" id="member_name" class="form-control" value="{{ $member->name }}" required>
+            </div>
+
+            <div class="mb-3">
+                <label for="phone_number" class="form-label">Phone Number</label>
+                <input type="text" name="phone_number" id="phone_number" class="form-control" value="{{ old('phone_number', $member->phone_number ?? '') }}">
+            </div>
+
             <div class="mb-3">
                 <label for="used_point" class="form-label">Use Points</label>
-                <input type="number" name="used_point" id="used_point" class="form-control" max="{{ $member->points }}" value="0">
+                <input type="number" name="used_point" id="used_point" class="form-control" max="{{ $member->points }}" value="0"{{ session('is_new_member') ? 'disabled' : '' }}>
             </div>
-        
+
             <div class="mb-3">
                 <label for="payment_amount" class="form-label">Amount Paid (Cash)</label>
                 <input type="text" name="payment_amount" id="payment_amount" class="form-control" placeholder="Rp 0">
             </div>
-        
+
             <button type="submit" class="btn btn-primary">Pay Now</button>
         </form>
+    </div>
+</div>
 @endsection
+
 @section('scripts')
 <script>
     document.addEventListener('DOMContentLoaded', function () {
@@ -67,48 +70,59 @@
         const pointsValue = 10; // Setiap poin bernilai 10 IDR
         const totalPrice = {{ $total }};
         const totalAfterPointDiv = document.getElementById('total-after-point');
-    
+
         function updateTotalAfterPoint() {
             let usedPoints = parseInt(usedPointInput.value) || 0;
             let totalAfterPoint = totalPrice - (usedPoints * pointsValue);
-    
+
             if (totalAfterPoint < 0) {
                 totalAfterPoint = 0;
                 usedPointInput.value = Math.floor(totalPrice / pointsValue);
             }
-    
+
             totalAfterPointDiv.innerText = 'Rp ' + totalAfterPoint.toLocaleString('id-ID');
         }
-    
+
         phoneInput.addEventListener('blur', function () {
-            const phone = phoneInput.value;
-    
+            const phone = phoneInput.value.trim();
+            console.log('Checking phone number:', phone);
+
             if (phone.length >= 8) {
-                // Panggil endpoint untuk mengecek member
+                nameInput.placeholder = 'Checking...';
+                
                 fetch(`/member/check?phone=${encodeURIComponent(phone)}`)
-                    .then(response => response.json())
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Network response was not ok');
+                        }
+                        return response.json();
+                    })
                     .then(data => {
+                        console.log('Response data:', data);
+                        
                         if (data.exists) {
-                            // Jika member ditemukan, isi nama dan poin
                             nameInput.value = data.name;
                             availablePointsSpan.innerText = data.points;
                             usedPointInput.max = data.points;
-                            updateTotalAfterPoint();
+                            console.log('Member found:', data.name);
                         } else {
-                            // Jika member tidak ditemukan, kosongkan nama dan poin
                             nameInput.value = '';
-                            availablePointsSpan.innerText = 0;
+                            availablePointsSpan.innerText = '0';
                             usedPointInput.max = 0;
                             usedPointInput.value = 0;
-                            updateTotalAfterPoint();
+                            console.log('No member found with that phone number');
                         }
+                        updateTotalAfterPoint();
+                    })
+                    .catch(error => {
+                        console.error('Error checking member:', error);
+                        nameInput.value = '';
                     });
             }
         });
-    
+
         usedPointInput.addEventListener('input', updateTotalAfterPoint);
-    
-        updateTotalAfterPoint(); // Jalankan awal untuk menghitung total
+        updateTotalAfterPoint();
     });
-    </script>
+</script>
 @endsection

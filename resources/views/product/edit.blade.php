@@ -11,6 +11,7 @@
                     <i class="bi bi-house-door"></i>
                     <i class="bi bi-arrow-right-short"></i> Product
                 </span>
+                <i class="bi bi-arrow-right-short"></i> Edit Product
             </div>
             <h2 class="page-title m-0">Product</h2>
         </div>

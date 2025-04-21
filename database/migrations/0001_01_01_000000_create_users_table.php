@@ -20,6 +20,7 @@ return new class extends Migration
             $table->rememberToken();
             $table->enum('role', ['admin', 'staff'])->default('staff'); 
             $table->timestamps();
+            $table->SoftDeletes();
         });
     }
 

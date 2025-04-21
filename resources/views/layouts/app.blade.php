@@ -103,8 +103,8 @@
         <a href="{{ url('/purchase') }}">
           <i class="bi bi-cart-plus-fill"></i> Purchase
         </a>
-        @if (Auth::user()->isAdmin())
-          <a href="{{ url('/User') }}">
+        @if (Auth::check() && Auth::user()->isAdmin())
+          <a href="{{ url('/users') }}">
               <i class="bi bi-person-fill"></i> User
           </a>
         @endif

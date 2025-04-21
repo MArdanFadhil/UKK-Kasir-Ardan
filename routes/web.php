@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Auth;
 use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\MemberController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\PurchaseController;
 use App\Http\Controllers\DashboardController;
@@ -38,4 +39,12 @@ Route::post('/purchase/store-member', [PurchaseController::class, 'storeMember']
 Route::get('/purchase/detail/{id}', [PurchaseController::class, 'detail'])->name('purchase.detail');
 Route::post('/purchase/detailDetail/{id}', [PurchaseController::class, 'orderDetail'])->name('purchase.detail.update');
 Route::get('/purchase/export', [PurchaseController::class, 'export'])->name('purchase.export');
-Route::get('/member/check', [App\Http\Controllers\MemberController::class, 'check'])->name('member.check');
+Route::get('/purchase/receipt/{id}', [PurchaseController::class, 'downloadReceipt'])->name('purchase.receipt');
+Route::get('/member/check', 'App\Http\Controllers\MemberController@check')->name('member.check');
+
+Route::get('/users', [UserController::class, 'index'])->name('user.index');
+Route::get('/users/create', [UserController::class, 'create'])->name('user.create');
+Route::post('users', [UserController::class, 'store'])->name('user.store');
+Route::get('/users/{id}/edit', [UserController::class, 'edit'])->name('user.edit');
+Route::put('/users/{id}', [UserController::class, 'update'])->name('user.update');
+Route::delete('/users/{id}', [UserController::class, 'destroy'])->name('user.destroy');
